@@ -18,6 +18,9 @@ type Relay interface {
 	Set(bool) bool
 	On() bool
 	Off() bool
+	Name() string
+	State() (interface{}, time.Time)
+	StateString() string
 }
 
 // New returns a Relay ready to be configured. The pin you pass here need not be configured.
