@@ -26,13 +26,17 @@ type Relay interface {
 	Execute(trigger.Trigger)
 	State() (interface{}, time.Time)
 	StateString() string
+	DurationCh() chan time.Duration
 }
 
 // New returns a Relay ready to be configured. The pin you pass here need not be configured.
 func New(p machine.Pin, name string) Relay {
 	return &relay{
-		name: name,
-		pin:  p,
+		name:       name,
+		pin:        p,
+		since:      time.Time{},
+		duration:   0,
+		durationCh: make(chan time.Duration, 1),
 	}
 }
 
@@ -41,6 +45,10 @@ func (r *relay) Configure() {
 	r.pin.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	r.Off()
 	r.since = time.Now()
+}
+
+func (r *relay) DurationCh() chan time.Duration {
+	return r.durationCh
 }
 
 // Execute acts on input from a trigger and along with relay.Name() implements the Triggerable interface
@@ -59,18 +67,20 @@ func (r *relay) Execute(t trigger.Trigger) {
 			r.since = time.Now()
 			r.duration = t.Duration
 			r.pin.High()
-			select {
-			case newDuration := <-r.durationCh:
-				r.duration = newDuration
-				t.Message = string(r.name + " - Changing On duration to " + r.duration.String() + " at " + time.Now().Format(time.RFC822))
-				t.ReportCh <- t
-			default:
-				if time.Since(r.since) > r.duration {
-					r.pin.Low()
-					t.Message = string(r.name + " - Off at " + time.Now().Format(time.RFC822) + " after " + time.Since(r.since).String())
+			for {
+				select {
+				case newDuration := <-r.durationCh:
+					r.duration = newDuration
+					t.Message = string(r.name + " - Changing On duration to " + r.duration.String() + " at " + time.Now().Format(time.RFC822))
 					t.ReportCh <- t
-					r.reset()
-					return
+				default:
+					if time.Since(r.since) > r.duration {
+						r.pin.Low()
+						t.Message = string(r.name + " - Off at " + time.Now().Format(time.RFC822) + " after " + time.Since(r.since).String())
+						t.ReportCh <- t
+						r.reset()
+						return
+					}
 				}
 			}
 		}()
@@ -80,14 +90,15 @@ func (r *relay) Execute(t trigger.Trigger) {
 		if r.pin.Get() {                  // if the "on" routine hasn't done so, force it off
 			r.pin.Low()
 			t.Error = false
-			t.Message = string(r.name + " - Off at " + time.Now().Local().Format(time.RFC822))
+			t.Message = string(r.name + " - Off at " + time.Now().Format(time.RFC822))
 			t.ReportCh <- t
 			r.reset()
 			return
 		}
+		return
 	default:
 		t.Error = true
-		t.Message = string("error - " + r.name + "does not understand Action: '" + t.Action + "' (On, Off, Toggle)")
+		t.Message = string("error - " + r.name + " does not understand Action: '" + t.Action + "' (On, Off)")
 		t.ReportCh <- t
 		return
 	}
