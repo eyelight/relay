@@ -4,12 +4,16 @@ import (
 	"machine"
 	"strings"
 	"time"
+
+	"github.com/eyelight/trigger"
 )
 
 type relay struct {
-	name  string
-	pin   machine.Pin
-	since time.Time
+	name       string
+	pin        machine.Pin
+	since      time.Time
+	duration   time.Duration
+	durationCh chan time.Duration
 }
 
 type Relay interface {
@@ -19,6 +23,7 @@ type Relay interface {
 	On() bool
 	Off() bool
 	Name() string
+	Execute(trigger.Trigger)
 	State() (interface{}, time.Time)
 	StateString() string
 }
@@ -36,6 +41,56 @@ func (r *relay) Configure() {
 	r.pin.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	r.Off()
 	r.since = time.Now()
+}
+
+// Execute acts on input from a trigger and along with relay.Name() implements the Triggerable interface
+func (r *relay) Execute(t trigger.Trigger) {
+	if t.Target != r.name {
+		t.Error = true
+		t.Message = string("error - " + r.name + " received a trigger intended for " + t.Target)
+		t.ReportCh <- t
+		return
+	}
+	switch t.Action {
+	case "On", "on", "ON":
+		t.Error = false
+		t.Message = string(r.name + " - On for " + t.Duration.String() + " at " + time.Now().Format(time.RFC822))
+		go func() {
+			r.since = time.Now()
+			r.duration = t.Duration
+			r.pin.High()
+			select {
+			case newDuration := <-r.durationCh:
+				r.duration = newDuration
+				t.Message = string(r.name + " - Changing On duration to " + r.duration.String() + " at " + time.Now().Format(time.RFC822))
+				t.ReportCh <- t
+			default:
+				if time.Since(r.since) > r.duration {
+					r.pin.Low()
+					t.Message = string(r.name + " - Off at " + time.Now().Format(time.RFC822) + " after " + time.Since(r.since).String())
+					t.ReportCh <- t
+					r.reset()
+					return
+				}
+			}
+		}()
+	case "Off", "off", "OFF":
+		r.durationCh <- 0                 // an existing "on" goroutine will be canceled by sending a zero duration
+		time.Sleep(10 * time.Millisecond) // allow that some time to take effect so the "on" goroutine will exit & send status
+		if r.pin.Get() {                  // if the "on" routine hasn't done so, force it off
+			r.pin.Low()
+			t.Error = false
+			t.Message = string(r.name + " - Off at " + time.Now().Local().Format(time.RFC822))
+			t.ReportCh <- t
+			r.reset()
+			return
+		}
+	default:
+		t.Error = true
+		t.Message = string("error - " + r.name + "does not understand Action: '" + t.Action + "' (On, Off, Toggle)")
+		t.ReportCh <- t
+		return
+	}
 }
 
 // Get returns a measured reading of the Relay's pin
@@ -98,6 +153,13 @@ func (r *relay) StateString() string {
 	return ss.String()
 }
 
+// Name returns the relay's name and along with relay.Execute() implements the Triggerable interface
 func (r *relay) Name() string {
 	return r.name
+}
+
+// reset zeroes the timing fields of a relay struct
+func (r *relay) reset() {
+	r.duration = 0
+	r.since = time.Time{}
 }
