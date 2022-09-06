@@ -53,6 +53,7 @@ func (r *relay) DurationCh() chan time.Duration {
 
 // Execute acts on input from a trigger and along with relay.Name() implements the Triggerable interface
 func (r *relay) Execute(t trigger.Trigger) {
+	println("relay.Execute()...")
 	if t.Target != r.name {
 		t.Error = true
 		t.Message = string("error - " + r.name + " received a trigger intended for " + t.Target)
