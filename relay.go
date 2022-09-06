@@ -35,7 +35,7 @@ func New(p machine.Pin, name string) Relay {
 		name:       name,
 		pin:        p,
 		since:      time.Time{},
-		duration:   0,
+		duration:   0 * time.Second,
 		durationCh: make(chan time.Duration, 1),
 	}
 }
