@@ -73,7 +73,6 @@ func (r *relay) Execute(t trigger.Trigger) {
 			}
 			r.duration = t.Duration
 			t.Message = string(r.name + " - On for " + t.Duration.String() + " at " + time.Now().Local().Format(time.RFC822))
-			t.ReportCh <- t
 			for {
 				select {
 				case newDuration := <-r.durationCh:
@@ -91,6 +90,7 @@ func (r *relay) Execute(t trigger.Trigger) {
 				}
 			}
 		}()
+		t.ReportCh <- t
 		return
 	case "Off", "off", "OFF":
 		r.durationCh <- 0                 // an existing "on" goroutine will be canceled by sending a zero duration
