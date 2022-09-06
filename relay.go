@@ -53,7 +53,7 @@ func (r *relay) DurationCh() chan time.Duration {
 
 // Execute acts on input from a trigger and along with relay.Name() implements the Triggerable interface
 func (r *relay) Execute(t trigger.Trigger) {
-	println("relay.Execute()...")
+	// println("relay.Execute()...")
 	if t.Target != r.name {
 		t.Error = true
 		t.Message = string("error - " + r.name + " received a trigger intended for " + t.Target)
@@ -63,21 +63,26 @@ func (r *relay) Execute(t trigger.Trigger) {
 	switch t.Action {
 	case "On", "on", "ON":
 		t.Error = false
-		t.Message = string(r.name + " - On for " + t.Duration.String() + " at " + time.Now().Format(time.RFC822))
 		go func() {
 			r.since = time.Now()
-			r.duration = t.Duration
 			r.pin.High()
+			if r.duration == 0 {
+				t.Message = string(r.name + " - On indefinitely at " + time.Now().Local().Format(time.RFC822))
+				t.ReportCh <- t
+				return
+			}
+			r.duration = t.Duration
+			t.Message = string(r.name + " - On for " + t.Duration.String() + " at " + time.Now().Local().Format(time.RFC822))
 			for {
 				select {
 				case newDuration := <-r.durationCh:
 					r.duration = newDuration
-					t.Message = string(r.name + " - Changing On duration to " + r.duration.String() + " at " + time.Now().Format(time.RFC822))
+					t.Message = string(r.name + " - Changing On duration to " + r.duration.String() + " at " + time.Now().Local().Format(time.RFC822))
 					t.ReportCh <- t
 				default:
 					if time.Since(r.since) > r.duration {
 						r.pin.Low()
-						t.Message = string(r.name + " - Off at " + time.Now().Format(time.RFC822) + " after " + time.Since(r.since).String())
+						t.Message = string(r.name + " - Off at " + time.Now().Local().Format(time.RFC822) + " after " + time.Since(r.since).String())
 						t.ReportCh <- t
 						r.reset()
 						return
@@ -85,13 +90,14 @@ func (r *relay) Execute(t trigger.Trigger) {
 				}
 			}
 		}()
+		return
 	case "Off", "off", "OFF":
 		r.durationCh <- 0                 // an existing "on" goroutine will be canceled by sending a zero duration
 		time.Sleep(10 * time.Millisecond) // allow that some time to take effect so the "on" goroutine will exit & send status
 		if r.pin.Get() {                  // if the "on" routine hasn't done so, force it off
 			r.pin.Low()
 			t.Error = false
-			t.Message = string(r.name + " - Off at " + time.Now().Format(time.RFC822))
+			t.Message = string(r.name + " - Off at " + time.Now().Local().Format(time.RFC822) + " after " + time.Since(r.since).String())
 			t.ReportCh <- t
 			r.reset()
 			return
