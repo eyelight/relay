@@ -66,7 +66,7 @@ func (r *relay) Execute(t trigger.Trigger) {
 		go func() {
 			r.since = time.Now()
 			r.pin.High()
-			if r.duration == 0 {
+			if t.Duration == 0 {
 				t.Message = string(r.name + " - On indefinitely at " + time.Now().Local().Format(time.RFC822))
 				t.ReportCh <- t
 				return
