@@ -23,7 +23,7 @@ type Relay interface {
 	On() bool
 	Off() bool
 	Name() string
-	Execute(trigger.Trigger)
+	Execute(t trigger.Trigger)
 	State() (interface{}, time.Time)
 	StateString() string
 	DurationCh() chan time.Duration
