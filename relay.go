@@ -73,6 +73,7 @@ func (r *relay) Execute(t trigger.Trigger) {
 			}
 			r.duration = t.Duration
 			t.Message = string(r.name + " - On for " + t.Duration.String() + " at " + time.Now().Local().Format(time.RFC822))
+			t.ReportCh <- t
 			for {
 				select {
 				case newDuration := <-r.durationCh:
