@@ -2,6 +2,7 @@ package relay
 
 import (
 	"machine"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,9 +56,10 @@ func (r *relay) DurationCh() chan time.Duration {
 
 // Execute acts on input from a trigger and along with relay.Name() implements the Triggerable interface
 func (r *relay) Execute(t trigger.Trigger) {
-	// println("relay.Execute()...")
+	println("relay.Execute()...")
 	if t.Target != r.name {
 		t.Error = true
+		println("error - " + r.name + " received a trigger intended for " + t.Target)
 		t.Message = string("error - " + r.name + " received a trigger intended for " + t.Target)
 		t.ReportCh <- t
 		return
@@ -68,52 +70,74 @@ func (r *relay) Execute(t trigger.Trigger) {
 		if !r.working {
 			r.working = true
 			go func() {
-				defer r.reset()
 				r.durationCh = make(chan time.Duration, 1)
 				r.off = make(chan struct{}, 1)
+				defer r.reset()
+				defer println("	relay.Execute() routine exiting.")
+				defer println("	" + r.name + " working: " + strconv.FormatBool(r.working))
+				defer println("	" + r.name + " duration: " + r.duration.String())
+				defer println("	" + r.name + " onTime: " + r.onTime.Format(time.RFC822))
+
 				r.onTime = time.Now()
 				r.pin.High()
-				if t.Duration <= 0 {
+
+				// determined duration or indeterminate
+				if t.Duration <= 0 { // sending a command with a negative or omitted duration will be treated as "indefinite on"
 					t.Message = string(r.name + " - On indefinitely at " + r.onTime.Local().Format(time.RFC822))
 					t.ReportCh <- t
 					// return
+				} else {
+					r.duration = t.Duration
+					t.Message = string(r.name + " - On for " + t.Duration.String() + " at " + r.onTime.Local().Format(time.RFC822))
+					t.ReportCh <- t
 				}
-				r.duration = t.Duration
-				t.Message = string(r.name + " - On for " + t.Duration.String() + " at " + r.onTime.Local().Format(time.RFC822))
-				t.ReportCh <- t
+
+				// wait for communication or off time
 				for {
 					select {
 					case <-r.off:
 						r.pin.Low()
 						t.Message = string(r.name + " - Forced Off after " + time.Since(r.onTime).String() + " at " + time.Now().Local().Format(time.RFC822))
+						t.ReportCh <- t
 						return
 					case newDuration := <-r.durationCh:
-						t.Message = string(r.name + " - Changing On duration to " + newDuration.String() + " (after " + time.Since(r.onTime).String() + " of a scheduled " + r.duration.String() + ") at " + time.Now().Local().Format(time.RFC822))
-						r.duration = newDuration
-						t.ReportCh <- t
-					default:
-						if time.Since(r.onTime) > r.duration {
+						if t.Duration <= 0 {
 							r.pin.Low()
 							t.Message = string(r.name + " - Off after " + time.Since(r.onTime).String() + " at " + time.Now().Local().Format(time.RFC822))
 							t.ReportCh <- t
 							return
+						}
+						t.Message = string(r.name + " - Changing On duration to " + newDuration.String() + " (after " + time.Since(r.onTime).String() + " of a scheduled " + r.duration.String() + ") at " + time.Now().Local().Format(time.RFC822))
+						r.duration = newDuration
+						t.ReportCh <- t
+					default:
+						if r.duration > 0 {
+							if time.Since(r.onTime) > r.duration {
+								r.pin.Low()
+								t.Message = string(r.name + " - Off after " + time.Since(r.onTime).String() + " at " + time.Now().Local().Format(time.RFC822))
+								time.Sleep(100 * time.Millisecond)
+								t.ReportCh <- t
+								return
+							}
 						}
 					}
 				}
 			}()
 		}
 		if t.Duration != r.duration {
+			println("Sending new duration of " + t.Duration.String() + " to " + r.name)
 			r.durationCh <- t.Duration
-
 		}
 		return
 	case "Off", "off", "OFF":
 		if r.pin.Get() { // if the "on" routine hasn't done so, force it off
+			println("sending off signal to " + r.name)
 			r.off <- struct{}{} // an existing "on" goroutine should be canceled & the relay reset
 			time.Sleep(15 * time.Millisecond)
 		}
 		if r.pin.Get() {
 			r.pin.Low()
+			println("Off handler forcing " + r.name + " off")
 			t.Message = string(r.name + " - Off! after " + time.Since(r.onTime).String() + " at " + time.Now().Local().Format(time.RFC822))
 			t.ReportCh <- t
 			r.reset()
