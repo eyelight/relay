@@ -123,7 +123,7 @@ func (r *relay) Execute(t trigger.Trigger) {
 								return
 							}
 						}
-						time.Sleep(500 * time.Millisecond)
+						time.Sleep(100 * time.Millisecond)
 					}
 				}
 			}()
