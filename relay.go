@@ -34,10 +34,12 @@ type Relay interface {
 // New returns a Relay ready to be configured. The pin you pass here need not be configured.
 func New(p machine.Pin, name string) Relay {
 	return &relay{
-		name:     name,
-		pin:      p,
-		onTime:   time.Time{},
-		duration: 0 * time.Second,
+		name:       name,
+		pin:        p,
+		onTime:     time.Time{},
+		duration:   0 * time.Second,
+		durationCh: nil,
+		off:        nil,
 	}
 }
 
