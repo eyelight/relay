@@ -16,7 +16,6 @@ type relay struct {
 	duration   time.Duration
 	durationCh *chan time.Duration
 	off        *chan struct{}
-	working    bool
 }
 
 type Relay interface {
@@ -66,8 +65,7 @@ func (r *relay) Execute(t trigger.Trigger) {
 	switch t.Action {
 	case "On", "on", "ON":
 		t.Error = false
-		if !r.working {
-			r.working = true
+		if r.off == nil && r.durationCh == nil { // these channel pointers are nil when the below goroutine is not actively working
 			r.onTime = time.Now()
 			r.pin.High()
 			go func() {
@@ -75,11 +73,12 @@ func (r *relay) Execute(t trigger.Trigger) {
 				off := make(chan struct{}, 1)
 				r.durationCh = &durationCh
 				r.off = &off
-				defer r.reset()
 				defer println("	relay.Execute() routine exiting.")
-				defer println("	" + r.name + " working: " + strconv.FormatBool(r.working))
-				defer println("	" + r.name + " duration: " + r.duration.String())
-				defer println("	" + r.name + " onTime: " + r.onTime.Format(time.RFC822))
+				defer time.Sleep(5 * time.Millisecond)
+				defer r.reset()
+				defer println("	Before reset" + r.name + " duration: " + r.duration.String())
+				defer println("	Before reset" + r.name + " onTime: " + r.onTime.Format(time.RFC822))
+				defer println("	Before reset" + r.name + " working: " + strconv.FormatBool(r.off != nil))
 
 				// r.onTime = time.Now()
 				// r.pin.High()
@@ -123,7 +122,7 @@ func (r *relay) Execute(t trigger.Trigger) {
 								return
 							}
 						}
-						time.Sleep(100 * time.Millisecond)
+						time.Sleep(45 * time.Millisecond)
 					}
 				}
 			}()
@@ -139,10 +138,10 @@ func (r *relay) Execute(t trigger.Trigger) {
 			}
 		}
 	case "Off", "off", "OFF":
-		if r.working {
+		if r.off != nil && r.durationCh != nil {
 			println("sending off signal to " + r.name)
 			*r.off <- struct{}{} // an existing "on" goroutine should be canceled & the relay reset
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 		}
 		if r.pin.Get() {
 			r.pin.Low()
@@ -243,8 +242,7 @@ func (r *relay) reset() {
 	println("'r.durationCh' nil? " + strconv.FormatBool(r.durationCh == nil))
 	r.duration = time.Duration(0)
 	r.onTime = time.Time{}
-	r.working = false
 	println("					" + r.name + " duration: " + r.duration.String())
 	println("					" + r.name + " onTime: " + r.onTime.Local().Format(time.RFC822))
-	println("					" + r.name + " working: " + strconv.FormatBool(r.working))
+	println("					" + r.name + " working: " + strconv.FormatBool(r.off != nil))
 }
