@@ -93,7 +93,7 @@ func (r *relay) Execute(t trigger.Trigger) {
 		t.ReportCh <- t
 		return
 	case "Off", "off", "OFF":
-		r.durationCh <- 0                 // an existing "on" goroutine will be canceled by sending a zero duration
+		r.durationCh <- time.Duration(0)  // an existing "on" goroutine will be canceled by sending a zero duration
 		time.Sleep(10 * time.Millisecond) // allow that some time to take effect so the "on" goroutine will exit & send status
 		if r.pin.Get() {                  // if the "on" routine hasn't done so, force it off
 			r.pin.Low()
