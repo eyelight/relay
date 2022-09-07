@@ -102,17 +102,19 @@ func (r *relay) Execute(t trigger.Trigger) {
 				}
 			}()
 		}
-		t.ReportCh <- t
+		if t.Duration != r.duration {
+			r.durationCh <- t.Duration
+
+		}
 		return
 	case "Off", "off", "OFF":
-		if r.working {
-			r.durationCh <- time.Duration(0)  // an existing "on" goroutine will be canceled by sending a zero duration
-			time.Sleep(10 * time.Millisecond) // allow that some time to take effect so the "on" goroutine will exit & send status
-		}
 		if r.pin.Get() { // if the "on" routine hasn't done so, force it off
+			r.off <- struct{}{} // an existing "on" goroutine should be canceled & the relay reset
+			time.Sleep(15 * time.Millisecond)
+		}
+		if r.pin.Get() {
 			r.pin.Low()
-			t.Error = false
-			t.Message = string(r.name + " - Off at " + time.Now().Local().Format(time.RFC822) + " after " + time.Since(r.onTime).String())
+			t.Message = string(r.name + " - Off! after " + time.Since(r.onTime).String() + " at " + time.Now().Local().Format(time.RFC822))
 			t.ReportCh <- t
 			r.reset()
 			return
