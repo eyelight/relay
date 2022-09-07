@@ -79,7 +79,7 @@ func (r *relay) Execute(t trigger.Trigger) {
 				defer time.Sleep(5 * time.Millisecond)
 				defer r.reset()
 				defer println("	Before reset" + r.name + " duration: " + r.duration.String())
-				defer println("	Before reset" + r.name + " onTime: " + r.onTime.Format(time.RFC822))
+				defer println("	Before reset" + r.name + " onTime: " + r.onTime.Local().Format(time.RFC822))
 				defer println("	Before reset" + r.name + " working: " + strconv.FormatBool(r.off != nil))
 
 				// r.onTime = time.Now()
@@ -135,7 +135,9 @@ func (r *relay) Execute(t trigger.Trigger) {
 		} else {
 			if t.Duration != r.duration {
 				println("	relay.Execute sending new duration of " + t.Duration.String() + " to " + r.name)
-				*r.durationCh <- t.Duration
+				if r.durationCh != nil {
+					*r.durationCh <- t.Duration
+				}
 				return
 			}
 		}
