@@ -123,10 +123,11 @@ func (r *relay) Execute(t trigger.Trigger) {
 					}
 				}
 			}()
-		}
-		if t.Duration != r.duration {
-			println("Sending new duration of " + t.Duration.String() + " to " + r.name)
-			r.durationCh <- t.Duration
+		} else {
+			if t.Duration != r.duration {
+				println("Sending new duration of " + t.Duration.String() + " to " + r.name)
+				r.durationCh <- t.Duration
+			}
 		}
 		return
 	case "Off", "off", "OFF":
