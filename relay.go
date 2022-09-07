@@ -11,9 +11,11 @@ import (
 type relay struct {
 	name       string
 	pin        machine.Pin
-	since      time.Time
+	onTime     time.Time
 	duration   time.Duration
 	durationCh chan time.Duration
+	off        chan struct{}
+	working    bool
 }
 
 type Relay interface {
@@ -34,7 +36,7 @@ func New(p machine.Pin, name string) Relay {
 	return &relay{
 		name:       name,
 		pin:        p,
-		since:      time.Time{},
+		onTime:     time.Time{},
 		duration:   0 * time.Second,
 		durationCh: make(chan time.Duration, 1),
 	}
@@ -44,7 +46,7 @@ func New(p machine.Pin, name string) Relay {
 func (r *relay) Configure() {
 	r.pin.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	r.Off()
-	r.since = time.Now()
+	r.onTime = time.Now()
 }
 
 func (r *relay) DurationCh() chan time.Duration {
@@ -63,42 +65,54 @@ func (r *relay) Execute(t trigger.Trigger) {
 	switch t.Action {
 	case "On", "on", "ON":
 		t.Error = false
-		go func() {
-			r.since = time.Now()
-			r.pin.High()
-			if t.Duration == 0 {
-				t.Message = string(r.name + " - On indefinitely at " + time.Now().Local().Format(time.RFC822))
-				t.ReportCh <- t
-				return
-			}
-			r.duration = t.Duration
-			t.Message = string(r.name + " - On for " + t.Duration.String() + " at " + time.Now().Local().Format(time.RFC822))
-			for {
-				select {
-				case newDuration := <-r.durationCh:
-					r.duration = newDuration
-					t.Message = string(r.name + " - Changing On duration to " + r.duration.String() + " at " + time.Now().Local().Format(time.RFC822))
+		if !r.working {
+			r.working = true
+			go func() {
+				defer r.reset()
+				r.durationCh = make(chan time.Duration, 1)
+				r.off = make(chan struct{}, 1)
+				r.onTime = time.Now()
+				r.pin.High()
+				if t.Duration >= 0 {
+					t.Message = string(r.name + " - On indefinitely at " + r.onTime.Local().Format(time.RFC822))
 					t.ReportCh <- t
-				default:
-					if time.Since(r.since) > r.duration {
+					// return
+				}
+				r.duration = t.Duration
+				t.Message = string(r.name + " - On for " + t.Duration.String() + " at " + r.onTime.Local().Format(time.RFC822))
+				t.ReportCh <- t
+				for {
+					select {
+					case <-r.off:
 						r.pin.Low()
-						t.Message = string(r.name + " - Off at " + time.Now().Local().Format(time.RFC822) + " after " + time.Since(r.since).String())
-						t.ReportCh <- t
-						r.reset()
+						t.Message = string(r.name + " - Forced Off after " + time.Since(r.onTime).String() + " at " + time.Now().Local().Format(time.RFC822))
 						return
+					case newDuration := <-r.durationCh:
+						t.Message = string(r.name + " - Changing On duration to " + newDuration.String() + " (after " + time.Since(r.onTime).String() + " of a scheduled " + r.duration.String() + ") at " + time.Now().Local().Format(time.RFC822))
+						r.duration = newDuration
+						t.ReportCh <- t
+					default:
+						if time.Since(r.onTime) > r.duration {
+							r.pin.Low()
+							t.Message = string(r.name + " - Off after " + time.Since(r.onTime).String() + " at " + time.Now().Local().Format(time.RFC822))
+							t.ReportCh <- t
+							return
+						}
 					}
 				}
-			}
-		}()
+			}()
+		}
 		t.ReportCh <- t
 		return
 	case "Off", "off", "OFF":
-		r.durationCh <- time.Duration(0)  // an existing "on" goroutine will be canceled by sending a zero duration
-		time.Sleep(10 * time.Millisecond) // allow that some time to take effect so the "on" goroutine will exit & send status
-		if r.pin.Get() {                  // if the "on" routine hasn't done so, force it off
+		if r.working {
+			r.durationCh <- time.Duration(0)  // an existing "on" goroutine will be canceled by sending a zero duration
+			time.Sleep(10 * time.Millisecond) // allow that some time to take effect so the "on" goroutine will exit & send status
+		}
+		if r.pin.Get() { // if the "on" routine hasn't done so, force it off
 			r.pin.Low()
 			t.Error = false
-			t.Message = string(r.name + " - Off at " + time.Now().Local().Format(time.RFC822) + " after " + time.Since(r.since).String())
+			t.Message = string(r.name + " - Off at " + time.Now().Local().Format(time.RFC822) + " after " + time.Since(r.onTime).String())
 			t.ReportCh <- t
 			r.reset()
 			return
@@ -120,7 +134,7 @@ func (r *relay) Get() bool {
 // Set brings the Relay's pin to the passed-in value and returns a subsequent, measured confirmation
 func (r *relay) Set(s bool) bool {
 	r.pin.Set(s)
-	r.since = time.Now()
+	r.onTime = time.Now()
 	time.Sleep(5 * time.Millisecond)
 	return r.pin.Get()
 }
@@ -128,7 +142,7 @@ func (r *relay) Set(s bool) bool {
 // On brings the Relays's pin high and returns a subsequent, measured confirmation
 func (r *relay) On() bool {
 	r.pin.High()
-	r.since = time.Now()
+	r.onTime = time.Now()
 	time.Sleep(5 * time.Millisecond)
 	return r.pin.Get()
 }
@@ -136,7 +150,7 @@ func (r *relay) On() bool {
 // Off brings the Relay's pin low and reutrns a subsequent, measured confirmation
 func (r *relay) Off() bool {
 	r.pin.Low()
-	r.since = time.Now()
+	r.onTime = time.Now()
 	time.Sleep(5 * time.Millisecond)
 	return r.pin.Get()
 }
@@ -151,7 +165,7 @@ func (r *relay) Off() bool {
 
 // State returns a Relay's state as a bool and the time since this state has been valid
 func (r *relay) State() (interface{}, time.Time) {
-	return r.Get(), r.since
+	return r.Get(), r.onTime
 }
 
 // StateString returns a Relay's state and the time since this has been valid as a string
@@ -168,7 +182,7 @@ func (r *relay) StateString() string {
 	ss.WriteString(" ")
 	ss.WriteString(s)
 	ss.WriteString(" since ")
-	ss.WriteString(r.since.String())
+	ss.WriteString(r.onTime.String())
 	return ss.String()
 }
 
@@ -179,6 +193,10 @@ func (r *relay) Name() string {
 
 // reset zeroes the timing fields of a relay struct
 func (r *relay) reset() {
-	r.duration = 0
-	r.since = time.Time{}
+	close(r.off)
+	close(r.durationCh)
+	r.duration = time.Duration(0)
+	r.onTime = time.Time{}
+	r.working = false
+	println("					resetting " + r.name)
 }
