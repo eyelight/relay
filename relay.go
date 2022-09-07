@@ -73,7 +73,7 @@ func (r *relay) Execute(t trigger.Trigger) {
 				r.off = make(chan struct{}, 1)
 				r.onTime = time.Now()
 				r.pin.High()
-				if t.Duration >= 0 {
+				if t.Duration <= 0 {
 					t.Message = string(r.name + " - On indefinitely at " + r.onTime.Local().Format(time.RFC822))
 					t.ReportCh <- t
 					// return
