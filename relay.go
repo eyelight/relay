@@ -69,6 +69,8 @@ func (r *relay) Execute(t trigger.Trigger) {
 		t.Error = false
 		if !r.working {
 			r.working = true
+			r.onTime = time.Now()
+			r.pin.High()
 			go func() {
 				r.durationCh = make(chan time.Duration, 1)
 				r.off = make(chan struct{}, 1)
@@ -78,8 +80,8 @@ func (r *relay) Execute(t trigger.Trigger) {
 				defer println("	" + r.name + " duration: " + r.duration.String())
 				defer println("	" + r.name + " onTime: " + r.onTime.Format(time.RFC822))
 
-				r.onTime = time.Now()
-				r.pin.High()
+				// r.onTime = time.Now()
+				// r.pin.High()
 
 				// determined duration or indeterminate
 				if t.Duration <= 0 { // sending a command with a negative or omitted duration will be treated as "indefinite on"
@@ -101,7 +103,7 @@ func (r *relay) Execute(t trigger.Trigger) {
 						t.ReportCh <- t
 						return
 					case newDuration := <-r.durationCh:
-						if t.Duration <= 0 {
+						if newDuration <= 0 {
 							r.pin.Low()
 							t.Message = string(r.name + " - Off after " + time.Since(r.onTime).String() + " at " + time.Now().Local().Format(time.RFC822))
 							t.ReportCh <- t
@@ -123,18 +125,22 @@ func (r *relay) Execute(t trigger.Trigger) {
 					}
 				}
 			}()
+			t.Message = string(r.name + " - On at " + r.onTime.Local().Format(time.RFC822))
+			t.ReportCh <- t
+			println("	relay.Execute returning from On + spawning goroutine")
+			return
 		} else {
 			if t.Duration != r.duration {
-				println("Sending new duration of " + t.Duration.String() + " to " + r.name)
+				println("	relay.Execute sending new duration of " + t.Duration.String() + " to " + r.name)
 				r.durationCh <- t.Duration
+				return
 			}
 		}
-		return
 	case "Off", "off", "OFF":
-		if r.pin.Get() { // if the "on" routine hasn't done so, force it off
+		if r.working {
 			println("sending off signal to " + r.name)
 			r.off <- struct{}{} // an existing "on" goroutine should be canceled & the relay reset
-			time.Sleep(15 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 		}
 		if r.pin.Get() {
 			r.pin.Low()
