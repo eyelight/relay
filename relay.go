@@ -14,8 +14,8 @@ type relay struct {
 	pin        machine.Pin
 	onTime     time.Time
 	duration   time.Duration
-	durationCh chan time.Duration
-	off        chan struct{}
+	durationCh *chan time.Duration
+	off        *chan struct{}
 	working    bool
 }
 
@@ -35,11 +35,10 @@ type Relay interface {
 // New returns a Relay ready to be configured. The pin you pass here need not be configured.
 func New(p machine.Pin, name string) Relay {
 	return &relay{
-		name:       name,
-		pin:        p,
-		onTime:     time.Time{},
-		duration:   0 * time.Second,
-		durationCh: make(chan time.Duration, 1),
+		name:     name,
+		pin:      p,
+		onTime:   time.Time{},
+		duration: 0 * time.Second,
 	}
 }
 
@@ -51,7 +50,7 @@ func (r *relay) Configure() {
 }
 
 func (r *relay) DurationCh() chan time.Duration {
-	return r.durationCh
+	return *r.durationCh
 }
 
 // Execute acts on input from a trigger and along with relay.Name() implements the Triggerable interface
@@ -72,8 +71,10 @@ func (r *relay) Execute(t trigger.Trigger) {
 			r.onTime = time.Now()
 			r.pin.High()
 			go func() {
-				r.durationCh = make(chan time.Duration, 1)
-				r.off = make(chan struct{}, 1)
+				durationCh := make(chan time.Duration, 1)
+				off := make(chan struct{}, 1)
+				r.durationCh = &durationCh
+				r.off = &off
 				defer r.reset()
 				defer println("	relay.Execute() routine exiting.")
 				defer println("	" + r.name + " working: " + strconv.FormatBool(r.working))
@@ -97,12 +98,12 @@ func (r *relay) Execute(t trigger.Trigger) {
 				// wait for communication or off time
 				for {
 					select {
-					case <-r.off:
+					case <-off:
 						r.pin.Low()
 						t.Message = string(r.name + " - Forced Off after " + time.Since(r.onTime).String() + " at " + time.Now().Local().Format(time.RFC822))
 						t.ReportCh <- t
 						return
-					case newDuration := <-r.durationCh:
+					case newDuration := <-durationCh:
 						if newDuration <= 0 {
 							r.pin.Low()
 							t.Message = string(r.name + " - Off after " + time.Since(r.onTime).String() + " at " + time.Now().Local().Format(time.RFC822))
@@ -122,25 +123,25 @@ func (r *relay) Execute(t trigger.Trigger) {
 								return
 							}
 						}
-						time.Sleep(1500 * time.Millisecond)
+						time.Sleep(500 * time.Millisecond)
 					}
 				}
 			}()
-			t.Message = string(r.name + " - On at " + r.onTime.Local().Format(time.RFC822))
-			t.ReportCh <- t
+			// t.Message = string(r.name + " - On at " + r.onTime.Local().Format(time.RFC822))
+			// t.ReportCh <- t
 			println("	relay.Execute returning from On + spawning goroutine")
 			return
 		} else {
 			if t.Duration != r.duration {
 				println("	relay.Execute sending new duration of " + t.Duration.String() + " to " + r.name)
-				r.durationCh <- t.Duration
+				*r.durationCh <- t.Duration
 				return
 			}
 		}
 	case "Off", "off", "OFF":
 		if r.working {
 			println("sending off signal to " + r.name)
-			r.off <- struct{}{} // an existing "on" goroutine should be canceled & the relay reset
+			*r.off <- struct{}{} // an existing "on" goroutine should be canceled & the relay reset
 			time.Sleep(100 * time.Millisecond)
 		}
 		if r.pin.Get() {
@@ -227,10 +228,23 @@ func (r *relay) Name() string {
 
 // reset zeroes the timing fields of a relay struct
 func (r *relay) reset() {
-	close(r.off)
-	close(r.durationCh)
+	println("					resetting " + r.name)
+	println("closing chan 'r.off'; nil? " + strconv.FormatBool(r.off == nil))
+	if r.off != nil {
+		close(*r.off)
+		r.off = nil
+	}
+	println("'r.off' nil? " + strconv.FormatBool(r.off == nil))
+	println("closing chan 'r.durationCh'; nil? " + strconv.FormatBool(r.durationCh == nil))
+	if r.durationCh != nil {
+		close(*r.durationCh)
+		r.durationCh = nil
+	}
+	println("'r.durationCh' nil? " + strconv.FormatBool(r.durationCh == nil))
 	r.duration = time.Duration(0)
 	r.onTime = time.Time{}
 	r.working = false
-	println("					resetting " + r.name)
+	println("					" + r.name + " duration: " + r.duration.String())
+	println("					" + r.name + " onTime: " + r.onTime.Local().Format(time.RFC822))
+	println("					" + r.name + " working: " + strconv.FormatBool(r.working))
 }
